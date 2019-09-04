@@ -62,7 +62,9 @@ public class QueryWorker extends PaginatingTask<QueryResultWrapper> {
     @Override
     public QueryResultWrapper next() throws BackendException {
         final Query backoff = new ExponentialBackoff.Query(request, delegate, permitsToConsume);
+
         final QueryResult result = backoff.runWithBackoff();
+
         final ConsumedCapacity consumedCapacity = result.getConsumedCapacity();
         if (null != consumedCapacity) {
             permitsToConsume = Math.max((int) (consumedCapacity.getCapacityUnits() - 1.0), 1);
@@ -89,11 +91,11 @@ public class QueryWorker extends PaginatingTask<QueryResultWrapper> {
     @Override
     protected QueryResultWrapper getMergedPages() {
         final QueryResult mergedDynamoResult = new QueryResult().withItems(getFinalItemList())
-                                                          .withCount(returnedCount)
-                                                          .withScannedCount(scannedCount)
-                                                          .withConsumedCapacity(new ConsumedCapacity()
-                                                                                        .withTableName(request.getTableName())
-                                                                                        .withCapacityUnits(totalCapacityUnits));
+        .withCount(returnedCount)
+        .withScannedCount(scannedCount)
+        .withConsumedCapacity(new ConsumedCapacity()
+                              .withTableName(request.getTableName())
+                              .withCapacityUnits(totalCapacityUnits));
         return new QueryResultWrapper(titanKey, mergedDynamoResult);
     }
 }

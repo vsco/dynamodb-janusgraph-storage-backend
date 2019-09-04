@@ -14,6 +14,13 @@
  */
 package com.amazon.janusgraph.diskstorage.dynamodb;
 
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
 import org.janusgraph.diskstorage.BackendException;
 import org.janusgraph.diskstorage.TemporaryBackendException;
 
@@ -44,6 +51,9 @@ public abstract class ExponentialBackoff<R, A> {
     static final String DELETE_ITEM_RETRIES = DynamoDbDelegate.DELETE_ITEM + RETRIES;
     static final String GET_ITEM_RETRIES = DynamoDbDelegate.GET_ITEM + RETRIES;
 
+    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(4);
+
+
     public static final class Scan extends ExponentialBackoff<ScanRequest, ScanResult> {
         private final int permits;
         public Scan(final ScanRequest request, final DynamoDbDelegate delegate, final int permits) {
@@ -51,8 +61,8 @@ public abstract class ExponentialBackoff<R, A> {
             this.permits = permits;
         }
         @Override
-        protected ScanResult call() throws BackendException {
-            return delegate.scan(request, permits);
+        protected CompletableFuture<ScanResult> call() {
+            return delegate.scanAsync(request, permits);
         }
         @Override
         protected String getTableName() {
@@ -68,8 +78,8 @@ public abstract class ExponentialBackoff<R, A> {
             this.permits = permits;
         }
         @Override
-        protected QueryResult call() throws BackendException {
-            return delegate.query(request, permits);
+        protected CompletableFuture<QueryResult> call() {
+            return delegate.queryAsync(request, permits);
         }
         @Override
         protected String getTableName() {
@@ -83,8 +93,8 @@ public abstract class ExponentialBackoff<R, A> {
             super(request, delegate, UPDATE_ITEM_RETRIES);
         }
         @Override
-        protected UpdateItemResult call() throws BackendException {
-            return delegate.updateItem(request);
+        protected CompletableFuture<UpdateItemResult> call() {
+            return delegate.updateItemAsync(request);
         }
         @Override
         protected String getTableName() {
@@ -98,8 +108,8 @@ public abstract class ExponentialBackoff<R, A> {
             super(request, delegate, DELETE_ITEM_RETRIES);
         }
         @Override
-        protected DeleteItemResult call() throws BackendException {
-            return delegate.deleteItem(request);
+        protected CompletableFuture<DeleteItemResult> call() {
+            return delegate.deleteItemAsync(request);
         }
         @Override
         protected String getTableName() {
@@ -113,8 +123,8 @@ public abstract class ExponentialBackoff<R, A> {
             super(request, delegate, GET_ITEM_RETRIES);
         }
         @Override
-        protected GetItemResult call() throws BackendException {
-            return delegate.getItem(request);
+        protected CompletableFuture<GetItemResult> call() {
+            return delegate.getItemAsync(request);
         }
         @Override
         protected String getTableName() {
@@ -137,44 +147,51 @@ public abstract class ExponentialBackoff<R, A> {
         this.tries = 0;
         this.apiNameRetries = apiNameTries;
     }
-    protected abstract A call() throws BackendException;
+    protected abstract CompletableFuture<A> call();
     protected abstract String getTableName();
 
+    public CompletableFuture<A> runWithBackoffAsync() {
+
+        tries++;
+        return call().whenComplete((r, e) -> {
+            while (e instanceof CompletionException) {
+                e = ((CompletionException) e).getCause();
+            }
+
+            if (e instanceof TemporaryBackendException) {
+                if (tries > delegate.getMaxRetries()) {
+                    throw new BackendRuntimeException("Max tries exceeded.");
+                }
+
+                scheduler.schedule(() -> {
+                    exponentialBackoffTime *= 2;
+                    runWithBackoffAsync();
+                }, exponentialBackoffTime, TimeUnit.MILLISECONDS);
+            }
+        });
+    }
+
     public A runWithBackoff() throws BackendException {
-        boolean interrupted = false;
+
         try {
-            do {
-                interrupted = runWithBackoffOnce();
-            } while (result == null);
+            result = runWithBackoffAsync().get();
             return result;
+        } catch (ExecutionException e) {
+            Throwable exc = e.getCause();
+            while (exc instanceof CompletionException) {
+                exc = ((CompletionException) exc).getCause();
+            }
+            if (exc instanceof BackendException) {
+                throw (BackendException) exc;
+            } else {
+                throw new BackendRuntimeException(exc.getMessage());
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BackendRuntimeException("exponential backoff was interrupted");
         } finally {
             //meter tries
             delegate.getMeter(delegate.getMeterName(apiNameRetries, getTableName())).mark(tries - 1);
-
-            if (interrupted) {
-                Thread.currentThread().interrupt();
-                throw new BackendRuntimeException("exponential backoff was interrupted");
-            }
         }
-    }
-
-    private boolean runWithBackoffOnce() throws BackendException {
-        boolean interrupted = false;
-        tries++;
-        try {
-            result = call();
-        } catch (TemporaryBackendException e) { //retriable
-            if (tries > delegate.getMaxRetries()) {
-                throw new TemporaryBackendException("Max tries exceeded.", e);
-            }
-            try {
-                Thread.sleep(exponentialBackoffTime);
-            } catch (InterruptedException ie) {
-                interrupted = true;
-            } finally {
-                exponentialBackoffTime *= 2;
-            }
-        }
-        return interrupted;
     }
 }
