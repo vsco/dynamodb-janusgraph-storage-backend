@@ -40,18 +40,34 @@ public abstract class PaginatingTask<R> implements Callable<R> {
     private final String apiName;
     private final String tableName;
 
+
+    public R call() throws BackendException {
+
+        return callAsync().get();
+    }
+
     /**
      * Paginates through pages of an entity.
      * @return an encapsulation of the pages of an entity
      * @throws BackendException if there was any trouble paginating
      */
-    public R call() throws BackendException {
-        while (hasNext) {
-            pagesProcessed++;
-            next();
-        }
-        delegate.updatePagesHistogram(apiName, tableName, pagesProcessed);
-        return getMergedPages();
+    public AsyncTask<R> callAsync() {
+
+        return paginateAllAsync().map(r -> {
+            delegate.updatePagesHistogram(apiName, tableName, pagesProcessed);
+            return getMergedPages();
+        });
+    }
+
+    private AsyncTask<Void> paginateAllAsync() {
+        return next().flatMap(r -> {
+            if (hasNext) {
+                pagesProcessed++;
+                return paginateAllAsync();
+            } else {
+                return AsyncTask.completedFuture(null);
+            }
+        });
     }
 
     /**
@@ -65,7 +81,7 @@ public abstract class PaginatingTask<R> implements Callable<R> {
      * @return the next page
      * @throws BackendException if there was an exception thrown by the backend.
      */
-    public abstract R next() throws BackendException;
+    public abstract AsyncTask<R> next();
 
     protected void markComplete() {
         hasNext = false;

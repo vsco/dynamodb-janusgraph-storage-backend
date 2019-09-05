@@ -17,8 +17,6 @@ package com.amazon.janusgraph.diskstorage.dynamodb;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.janusgraph.diskstorage.BackendException;
-
 import com.amazonaws.services.dynamodbv2.model.ListTablesRequest;
 import com.amazonaws.services.dynamodbv2.model.ListTablesResult;
 
@@ -34,22 +32,25 @@ public class ListTablesWorker extends PaginatingTask<ListTablesResult> {
     private final ListTablesRequest request = new ListTablesRequest();
     private final List<String> tableNames = new ArrayList<>();
 
-     ListTablesWorker(final DynamoDbDelegate delegate) {
+    ListTablesWorker(final DynamoDbDelegate delegate) {
         super(delegate, delegate.getListTablesApiName(), null /*tableName*/);
     }
 
     @Override
-    public ListTablesResult next() throws BackendException {
-        final ListTablesResult result = delegate.listTables(request);
-        if (result.getLastEvaluatedTableName() != null && !result.getLastEvaluatedTableName().isEmpty()) {
-            request.setExclusiveStartTableName(result.getLastEvaluatedTableName());
-        } else { //done
-            markComplete();
-        }
+    public AsyncTask<ListTablesResult> next() {
+        final AsyncTask<ListTablesResult> result = delegate.listTablesAsync(request);
+        return result.map(r -> {
 
-        // c add scanned items
-        tableNames.addAll(result.getTableNames());
-        return result;
+            if (r.getLastEvaluatedTableName() != null && !r.getLastEvaluatedTableName().isEmpty()) {
+                request.setExclusiveStartTableName(r.getLastEvaluatedTableName());
+            } else { //done
+                markComplete();
+            }
+
+            // c add scanned items
+            tableNames.addAll(r.getTableNames());
+            return r;
+        });
     }
 
     @Override

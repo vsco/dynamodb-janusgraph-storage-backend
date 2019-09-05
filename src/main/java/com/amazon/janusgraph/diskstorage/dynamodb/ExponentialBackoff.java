@@ -14,9 +14,6 @@
  */
 package com.amazon.janusgraph.diskstorage.dynamodb;
 
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -61,7 +58,7 @@ public abstract class ExponentialBackoff<R, A> {
             this.permits = permits;
         }
         @Override
-        protected CompletableFuture<ScanResult> call() {
+        protected AsyncTask<ScanResult> call() {
             return delegate.scanAsync(request, permits);
         }
         @Override
@@ -78,7 +75,7 @@ public abstract class ExponentialBackoff<R, A> {
             this.permits = permits;
         }
         @Override
-        protected CompletableFuture<QueryResult> call() {
+        protected AsyncTask<QueryResult> call() {
             return delegate.queryAsync(request, permits);
         }
         @Override
@@ -93,7 +90,7 @@ public abstract class ExponentialBackoff<R, A> {
             super(request, delegate, UPDATE_ITEM_RETRIES);
         }
         @Override
-        protected CompletableFuture<UpdateItemResult> call() {
+        protected AsyncTask<UpdateItemResult> call() {
             return delegate.updateItemAsync(request);
         }
         @Override
@@ -108,7 +105,7 @@ public abstract class ExponentialBackoff<R, A> {
             super(request, delegate, DELETE_ITEM_RETRIES);
         }
         @Override
-        protected CompletableFuture<DeleteItemResult> call() {
+        protected AsyncTask<DeleteItemResult> call() {
             return delegate.deleteItemAsync(request);
         }
         @Override
@@ -123,7 +120,7 @@ public abstract class ExponentialBackoff<R, A> {
             super(request, delegate, GET_ITEM_RETRIES);
         }
         @Override
-        protected CompletableFuture<GetItemResult> call() {
+        protected AsyncTask<GetItemResult> call() {
             return delegate.getItemAsync(request);
         }
         @Override
@@ -147,16 +144,13 @@ public abstract class ExponentialBackoff<R, A> {
         this.tries = 0;
         this.apiNameRetries = apiNameTries;
     }
-    protected abstract CompletableFuture<A> call();
+    protected abstract AsyncTask<A> call();
     protected abstract String getTableName();
 
-    public CompletableFuture<A> runWithBackoffAsync() {
+    public AsyncTask<A> runWithBackoffAsync() {
 
         tries++;
         return call().whenComplete((r, e) -> {
-            while (e instanceof CompletionException) {
-                e = ((CompletionException) e).getCause();
-            }
 
             if (e instanceof TemporaryBackendException) {
                 if (tries > delegate.getMaxRetries()) {
@@ -172,26 +166,6 @@ public abstract class ExponentialBackoff<R, A> {
     }
 
     public A runWithBackoff() throws BackendException {
-
-        try {
-            result = runWithBackoffAsync().get();
-            return result;
-        } catch (ExecutionException e) {
-            Throwable exc = e.getCause();
-            while (exc instanceof CompletionException) {
-                exc = ((CompletionException) exc).getCause();
-            }
-            if (exc instanceof BackendException) {
-                throw (BackendException) exc;
-            } else {
-                throw new BackendRuntimeException(exc.getMessage());
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new BackendRuntimeException("exponential backoff was interrupted");
-        } finally {
-            //meter tries
-            delegate.getMeter(delegate.getMeterName(apiNameRetries, getTableName())).mark(tries - 1);
-        }
+        return runWithBackoffAsync().get();
     }
 }

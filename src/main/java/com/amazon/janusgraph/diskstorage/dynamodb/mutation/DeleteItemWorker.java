@@ -14,7 +14,9 @@
  */
 package com.amazon.janusgraph.diskstorage.dynamodb.mutation;
 
-import org.janusgraph.diskstorage.BackendException;
+import com.amazon.janusgraph.diskstorage.dynamodb.AsyncTask;
+
+
 
 import com.amazon.janusgraph.diskstorage.dynamodb.DynamoDbDelegate;
 import com.amazon.janusgraph.diskstorage.dynamodb.ExponentialBackoff.DeleteItem;
@@ -28,16 +30,14 @@ import lombok.RequiredArgsConstructor;
  *
  */
 @RequiredArgsConstructor
-public class DeleteItemWorker implements MutateWorker {
+public class DeleteItemWorker extends MutateWorker {
 
     private final DeleteItemRequest deleteItemRequest;
     private final DynamoDbDelegate dynamoDbDelegate;
 
     @Override
-    public Void call() throws BackendException {
-        new DeleteItem(deleteItemRequest, dynamoDbDelegate).runWithBackoff();
-
-        // void
-        return null;
+    public AsyncTask<Void> callAsync() {
+        final DeleteItem item = new DeleteItem(deleteItemRequest, dynamoDbDelegate);
+        return AsyncTask.allOf(item.runWithBackoffAsync());
     }
 }

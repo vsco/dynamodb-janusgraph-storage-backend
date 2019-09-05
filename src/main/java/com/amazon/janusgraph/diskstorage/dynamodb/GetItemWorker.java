@@ -39,8 +39,12 @@ public class GetItemWorker implements Callable<GetItemResultWrapper> {
 
     @Override
     public GetItemResultWrapper call() throws Exception {
-        final GetItemResult result = new ExponentialBackoff.GetItem(request, dynamoDbDelegate).runWithBackoff();
-        return new GetItemResultWrapper(hashKey, result);
+        return callAsync().get();
+    }
+
+    public AsyncTask<GetItemResultWrapper> callAsync() {
+        final AsyncTask<GetItemResult> result = new ExponentialBackoff.GetItem(request, dynamoDbDelegate).runWithBackoffAsync();
+        return result.map(r -> new GetItemResultWrapper(hashKey, r));
     }
 
 }

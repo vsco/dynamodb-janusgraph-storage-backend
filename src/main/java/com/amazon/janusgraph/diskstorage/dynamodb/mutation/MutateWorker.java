@@ -14,7 +14,11 @@
  */
 package com.amazon.janusgraph.diskstorage.dynamodb.mutation;
 
+import com.amazon.janusgraph.diskstorage.dynamodb.AsyncTask;
+
 import java.util.concurrent.Callable;
+
+import org.janusgraph.diskstorage.BackendException;
 
 /**
  *
@@ -22,7 +26,12 @@ import java.util.concurrent.Callable;
  * @author Michael Rodaitis
  *
  */
-public interface MutateWorker extends Callable<Void> {
+public abstract class MutateWorker implements Callable<Void> {
 
+    @Override
+    public Void call() throws BackendException  {
+        return callAsync().get();
+    }
 
+    public abstract AsyncTask<Void> callAsync();
 }

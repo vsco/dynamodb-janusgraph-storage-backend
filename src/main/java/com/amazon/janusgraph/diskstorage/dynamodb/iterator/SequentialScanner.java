@@ -15,9 +15,8 @@
 package com.amazon.janusgraph.diskstorage.dynamodb.iterator;
 
 import java.io.IOException;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
-
+import org.janusgraph.diskstorage.BackendException;
+import com.amazon.janusgraph.diskstorage.dynamodb.AsyncTask;
 import com.amazon.janusgraph.diskstorage.dynamodb.BackendRuntimeException;
 import com.amazon.janusgraph.diskstorage.dynamodb.DynamoDbDelegate;
 import com.amazonaws.services.dynamodbv2.model.ScanRequest;
@@ -42,7 +41,7 @@ public class SequentialScanner implements Scanner {
     private final DynamoDbDelegate dynamoDbDelegate;
     private final ScanRequest request;
     private int lastConsumedCapacity;
-    private Future<ScanResult> currentFuture;
+    private AsyncTask<ScanResult> currentFuture;
 
     public SequentialScanner(final DynamoDbDelegate dynamoDbDelegate, final ScanRequest request) {
         this.dynamoDbDelegate = dynamoDbDelegate;
@@ -59,17 +58,16 @@ public class SequentialScanner implements Scanner {
     }
 
     @SuppressFBWarnings(value = "IT_NO_SUCH_ELEMENT",
-        justification = "https://github.com/awslabs/dynamodb-janusgraph-storage-backend/issues/222")
+                        justification = "https://github.com/awslabs/dynamodb-janusgraph-storage-backend/issues/222")
     @Override
     public ScanContext next() {
         ScanResult result = null;
         final boolean interrupted = false;
         try {
             result = currentFuture.get();
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        } catch (ExecutionException e) {
-            throw new BackendRuntimeException(dynamoDbDelegate.unwrapExecutionException(e, DynamoDbDelegate.SCAN));
+
+        } catch (BackendException e) {
+            throw new BackendRuntimeException(e);
         } finally {
             if (interrupted) {
                 Thread.currentThread().interrupt();

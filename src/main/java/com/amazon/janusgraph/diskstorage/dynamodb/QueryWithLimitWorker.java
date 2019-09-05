@@ -17,7 +17,6 @@ package com.amazon.janusgraph.diskstorage.dynamodb;
 import java.util.List;
 import java.util.Map;
 
-import org.janusgraph.diskstorage.BackendException;
 import org.janusgraph.diskstorage.StaticBuffer;
 
 import com.amazonaws.services.dynamodbv2.model.AttributeValue;
@@ -41,20 +40,23 @@ public class QueryWithLimitWorker extends QueryWorker {
     }
 
     @Override
-    public QueryResultWrapper next() throws BackendException {
-        final QueryResultWrapper wrapper = super.next();
+    public AsyncTask<QueryResultWrapper> next() {
+        final AsyncTask<QueryResultWrapper> wrapper = super.next();
 
-        final int returnedCount = getReturnedCount();
-        // If we already have reached the limit for this query, we can stop making new requests
-        if (returnedCount >= limit) {
-            markComplete();
-        } else {
-            // Make sure we don't ask DynamoDB for more results than we care about
-            final int maxRemainingRecords = limit - returnedCount;
-            Preconditions.checkState(maxRemainingRecords > 0);
-            getRequest().setLimit(maxRemainingRecords);
-        }
-        return wrapper;
+        return wrapper.map(r -> {
+            final int returnedCount = getReturnedCount();
+            // If we already have reached the limit for this query, we can stop making new requests
+            if (returnedCount >= limit) {
+                markComplete();
+            } else {
+                // Make sure we don't ask DynamoDB for more results than we care about
+                final int maxRemainingRecords = limit - returnedCount;
+                Preconditions.checkState(maxRemainingRecords > 0);
+                getRequest().setLimit(maxRemainingRecords);
+            }
+            return r;
+        });
+
     }
 
     @Override

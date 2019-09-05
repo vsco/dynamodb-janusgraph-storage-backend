@@ -126,7 +126,7 @@ public class DynamoDBStoreManager extends DistributedStoreManager implements Key
 
     @Override
     public boolean exists() throws BackendException {
-        return client.getDelegate().listTables(new ListTablesRequest()) != null;
+        return client.getDelegate().listTablesAsync(new ListTablesRequest()).get() != null;
     }
 
     @Override
@@ -150,22 +150,22 @@ public class DynamoDBStoreManager extends DistributedStoreManager implements Key
     private StandardStoreFeatures initializeFeatures(final Configuration config) {
         final Builder builder = new StandardStoreFeatures.Builder();
         return builder.batchMutation(true)
-                      .cellTTL(false)
-                      .distributed(true)
-                      .keyConsistent(config)
-                      .keyOrdered(false)
-                      .localKeyPartition(false)
-                      .locking(config.get(Constants.DYNAMODB_USE_NATIVE_LOCKING))
-                      .multiQuery(true)
-                      .orderedScan(false)
-                      .preferredTimestamps(TimestampProviders.MILLI) //ignored because timestamps is false
-                      .storeTTL(false)
-                      .timestamps(false)
-                      .transactional(false)
-                      .supportsInterruption(false)
-                      .optimisticLocking(true)
-                      .unorderedScan(true)
-                      .visibility(false).build();
+               .cellTTL(false)
+               .distributed(true)
+               .keyConsistent(config)
+               .keyOrdered(false)
+               .localKeyPartition(false)
+               .locking(config.get(Constants.DYNAMODB_USE_NATIVE_LOCKING))
+               .multiQuery(true)
+               .orderedScan(false)
+               .preferredTimestamps(TimestampProviders.MILLI) //ignored because timestamps is false
+               .storeTTL(false)
+               .timestamps(false)
+               .transactional(false)
+               .supportsInterruption(false)
+               .optimisticLocking(true)
+               .unorderedScan(true)
+               .visibility(false).build();
     }
 
     @Override
@@ -196,11 +196,11 @@ public class DynamoDBStoreManager extends DistributedStoreManager implements Key
             Collections.shuffle(mutationWorkers);
 
             client.getDelegate().getMeter(client.getDelegate().getMeterName(this.prefixAndMutateManyKeys, null /*tableName*/))
-                .mark(keys);
+            .mark(keys);
             client.getDelegate().getMeter(client.getDelegate().getMeterName(this.prefixAndMutateManyUpdateOrDeleteItemCalls, null /*tableName*/))
-                .mark(updateOrDeleteItemCalls);
+            .mark(updateOrDeleteItemCalls);
             client.getDelegate().getMeter(client.getDelegate().getMeterName(this.prefixAndMutateManyStores, null /*tableName*/))
-                .mark(mutations.size());
+            .mark(mutations.size());
             client.getDelegate().parallelMutate(mutationWorkers);
         } finally {
             ctxt.stop();

@@ -67,7 +67,7 @@ public class MultiRecordIterator implements RecordIterator<Entry> {
         // This is necessary because even if the query worker has a next page it might have no results.
         while (queryWorker.hasNext() && !currentIterator.hasNext()) {
             try {
-                final QueryResultWrapper resultWrapper = queryWorker.next();
+                final QueryResultWrapper resultWrapper = queryWorker.next().get();
                 final QueryResult queryResult = resultWrapper.getDynamoDBResult();
 
                 currentIterator = buildRecordIteratorFromQueryResult(queryResult);
@@ -83,7 +83,7 @@ public class MultiRecordIterator implements RecordIterator<Entry> {
         for (Map<String, AttributeValue> item : queryResult.getItems()) {
             // DynamoDB's between includes the end of the range, but Titan's slice queries expect the end key to be exclusive
             final Entry entry = new EntryBuilder(item).slice(rangeKeySliceQuery.getSliceStart(), rangeKeySliceQuery.getSliceEnd())
-                                                      .build();
+            .build();
             if (entry != null) {
                 entries.add(entry);
             }

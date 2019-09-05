@@ -18,8 +18,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+
 import lombok.AccessLevel;
-import org.janusgraph.diskstorage.BackendException;
 import org.janusgraph.diskstorage.StaticBuffer;
 
 import com.amazon.janusgraph.diskstorage.dynamodb.ExponentialBackoff.Query;
@@ -60,11 +60,15 @@ public class QueryWorker extends PaginatingTask<QueryResultWrapper> {
     }
 
     @Override
-    public QueryResultWrapper next() throws BackendException {
+    public AsyncTask<QueryResultWrapper> next() {
         final Query backoff = new ExponentialBackoff.Query(request, delegate, permitsToConsume);
 
-        final QueryResult result = backoff.runWithBackoff();
+        final AsyncTask<QueryResult> queryResult = backoff.runWithBackoffAsync();
 
+        return queryResult.map(r -> toQueryResultWrapper(r));
+    }
+
+    private QueryResultWrapper toQueryResultWrapper(final QueryResult result) {
         final ConsumedCapacity consumedCapacity = result.getConsumedCapacity();
         if (null != consumedCapacity) {
             permitsToConsume = Math.max((int) (consumedCapacity.getCapacityUnits() - 1.0), 1);

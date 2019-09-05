@@ -28,15 +28,13 @@ import java.util.Map.Entry;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.CompletionService;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
+import java.util.stream.Collectors;
 
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
@@ -106,7 +104,6 @@ import com.codahale.metrics.Timer;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
-import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.util.concurrent.RateLimiter;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
@@ -292,7 +289,7 @@ public class DynamoDbDelegate  {
     }
 
 
-    public CompletableFuture<ScanResult> scanAsync(final ScanRequest request, final int permitsToConsume) {
+    public AsyncTask<ScanResult> scanAsync(final ScanRequest request, final int permitsToConsume) {
 
         final Scan backoff = new Scan(request, this, permitsToConsume);
         return backoff.runWithBackoffAsync();
@@ -315,112 +312,44 @@ public class DynamoDbDelegate  {
     }
 
     void parallelMutate(final List<MutateWorker> workers) throws BackendException {
-        final CompletionService<Void> completion = new ExecutorCompletionService<>(clientThreadPool);
-        final List<Future<Void>> futures = Lists.newLinkedList();
-        for (MutateWorker worker : workers) {
-            futures.add(completion.submit(worker));
-        }
 
-        //block on the futures all getting or throwing instead of using a latch as i need to check future status anyway
-        boolean interrupted = false;
-        try {
-            for (int i = 0; i < workers.size(); i++) {
-                try {
-                    completion.take().get(); //Void
-                } catch (InterruptedException e) {
-                    interrupted = true;
-                    // fail out because janusgraph does not poll this thread for interrupted anywhere
-                    throw new BackendRuntimeException("was interrupted during parallelMutate");
-                } catch (ExecutionException e) {
-                    throw unwrapExecutionException(e, MUTATE_ITEM);
-                }
-            }
-        } finally {
-            for (Future<Void> future : futures) {
-                if (!future.isDone()) {
-                    future.cancel(interrupted /* mayInterruptIfRunning */);
-                }
-            }
-            if (interrupted) {
-                // set interrupted on this thread
-                Thread.currentThread().interrupt();
-            }
-        }
+        final AsyncTask<Void>[] a = workers.stream()
+                                    .map(w -> w.callAsync())
+                                    .toArray(AsyncTask[]::new);
+        AsyncTask.allOf(a).get();
     }
 
+
     List<QueryResultWrapper> parallelQuery(final List<QueryWorker> queryWorkers) throws BackendException {
-        final CompletionService<QueryResultWrapper> completionService = new ExecutorCompletionService<>(clientThreadPool);
 
-        final List<Future<QueryResultWrapper>> futures = Lists.newLinkedList();
-        for (QueryWorker worker : queryWorkers) {
-            futures.add(completionService.submit(worker));
-        }
+        // Ensure all async tasks are started
+        final Stream<AsyncTask<QueryResultWrapper>> str = queryWorkers.stream().map(w -> w.callAsync());
 
-        boolean interrupted = false;
-        final List<QueryResultWrapper> results = Lists.newLinkedList();
-        try {
-            for (int i = 0; i < queryWorkers.size(); i++) {
-                try {
-                    final QueryResultWrapper result = completionService.take().get();
-                    results.add(result);
-                } catch (InterruptedException e) {
-                    interrupted = true;
-                    // fail out because janusgraph does not poll this thread for interrupted anywhere
-                    throw new BackendRuntimeException("was interrupted during parallelQuery");
-                } catch (ExecutionException e) {
-                    throw unwrapExecutionException(e, QUERY);
-                }
-            }
-        } finally {
-            for (Future<QueryResultWrapper> future : futures) {
-                if (!future.isDone()) {
-                    future.cancel(interrupted /* mayInterruptIfRunning */);
-                }
-            }
+        final AsyncTask<QueryResultWrapper>[] a = str.toArray(AsyncTask[]::new);
 
-            if (interrupted) {
-                // set interrupted on this thread and fail out
-                Thread.currentThread().interrupt();
-            }
-        }
-        return results;
+        // wait for completion
+        AsyncTask.allOf(a).get();
+
+        return str.map(c -> c.join())
+               .collect(Collectors.toList());
     }
 
     Map<StaticBuffer, GetItemResult> parallelGetItem(final List<GetItemWorker> workers) throws BackendException {
-        final CompletionService<GetItemResultWrapper> completionService = new ExecutorCompletionService<>(clientThreadPool);
 
-        final List<Future<GetItemResultWrapper>> futures = Lists.newLinkedList();
-        for (GetItemWorker worker : workers) {
-            futures.add(completionService.submit(worker));
-        }
+        // Ensure all async tasks are started
 
-        boolean interrupted = false;
-        final Map<StaticBuffer, GetItemResult> results = Maps.newHashMap();
-        try {
-            for (int i = 0; i < workers.size(); i++) {
-                try {
-                    final GetItemResultWrapper result = completionService.take().get();
-                    results.put(result.getJanusGraphKey(), result.getDynamoDBResult());
-                } catch (InterruptedException e) {
-                    interrupted = true;
-                    throw new BackendRuntimeException("was interrupted during parallelGet");
-                } catch (ExecutionException e) {
-                    throw unwrapExecutionException(e, GET_ITEM);
-                }
-            }
-        } finally {
-            for (Future<GetItemResultWrapper> future : futures) {
-                if (!future.isDone()) {
-                    future.cancel(interrupted /* mayInterruptIfRunning */);
-                }
-            }
+        final Stream<AsyncTask<GetItemResultWrapper>> str = workers.stream().map(w -> w.callAsync());
 
-            if (interrupted) {
-                // set interrupted on this thread and fail out
-                Thread.currentThread().interrupt();
-            }
-        }
-        return results;
+        final AsyncTask<Void>[] a = str.toArray(AsyncTask[]::new);
+
+        // wait for completion
+        AsyncTask.allOf(a).get();
+
+        return str.map(c -> c.join())
+               .collect(Collectors.toMap(
+                            r -> r.getJanusGraphKey(),
+                            r -> r.getDynamoDBResult()));
+
     }
 
     public BackendException unwrapExecutionException(final ExecutionException e, final String apiName) {
@@ -433,9 +362,9 @@ public class DynamoDbDelegate  {
         }
     }
 
-    CompletableFuture<GetItemResult> getItemAsync(final GetItemRequest request) {
+    AsyncTask<GetItemResult> getItemAsync(final GetItemRequest request) {
         setUserAgent(request);
-        final CompletableFuture<GetItemResult> result = new CompletableFuture();
+        final AsyncTask<GetItemResult> result = new AsyncTask();
         timedReadThrottle(GET_ITEM, request.getTableName(), estimateCapacityUnits(GET_ITEM, request.getTableName()));
         final Timer.Context apiTimerContext = getTimerContext(GET_ITEM, request.getTableName());
 
@@ -455,7 +384,7 @@ public class DynamoDbDelegate  {
 
     }
 
-    public CompletableFuture<BatchWriteItemResult> batchWriteItemAsync(final BatchWriteItemRequest batchRequest) throws BackendException {
+    public AsyncTask<BatchWriteItemResult> batchWriteItemAsync(final BatchWriteItemRequest batchRequest) throws BackendException {
         int count = 0;
         for (Entry<String, List<WriteRequest>> entry : batchRequest.getRequestItems().entrySet()) {
             final String tableName = entry.getKey();
@@ -482,7 +411,7 @@ public class DynamoDbDelegate  {
             }
         }
 
-        final CompletableFuture<BatchWriteItemResult> result = new CompletableFuture();
+        final AsyncTask<BatchWriteItemResult> result = new AsyncTask();
         setUserAgent(batchRequest);
 
         final Timer.Context apiTimerContext = getTimerContext(BATCH_WRITE_ITEM, null /*tableName*/);
@@ -506,9 +435,9 @@ public class DynamoDbDelegate  {
         });
     }
 
-    public CompletableFuture<QueryResult> queryAsync(final QueryRequest request, final int permitsToConsume) {
+    public AsyncTask<QueryResult> queryAsync(final QueryRequest request, final int permitsToConsume) {
         setUserAgent(request);
-        final CompletableFuture<QueryResult> result = new CompletableFuture<QueryResult>();
+        final AsyncTask<QueryResult> result = new AsyncTask<QueryResult>();
         timedReadThrottle(QUERY, request.getTableName(), permitsToConsume);
         final Timer.Context apiTimerContext = getTimerContext(QUERY, request.getTableName());
 
@@ -528,9 +457,9 @@ public class DynamoDbDelegate  {
         });
     }
 
-    public CompletableFuture<PutItemResult> putItemAsync(final PutItemRequest request) {
+    public AsyncTask<PutItemResult> putItemAsync(final PutItemRequest request) {
         setUserAgent(request);
-        final CompletableFuture<PutItemResult> result = new CompletableFuture();
+        final AsyncTask<PutItemResult> result = new AsyncTask();
         final int bytes = calculateItemSizeInBytes(request.getItem());
         getBytesHistogram(PUT_ITEM, request.getTableName()).update(bytes);
         final int wcu = computeWcu(bytes);
@@ -554,9 +483,9 @@ public class DynamoDbDelegate  {
 
     }
 
-    CompletableFuture<UpdateItemResult> updateItemAsync(final UpdateItemRequest request) {
+    AsyncTask<UpdateItemResult> updateItemAsync(final UpdateItemRequest request) {
         setUserAgent(request);
-        final CompletableFuture<UpdateItemResult> result = new CompletableFuture();
+        final AsyncTask<UpdateItemResult> result = new AsyncTask();
         final int bytes;
         if (request.getUpdateExpression() != null) {
             bytes = calculateExpressionBasedUpdateSize(request);
@@ -602,9 +531,9 @@ public class DynamoDbDelegate  {
         return size;
     }
 
-    CompletableFuture<DeleteItemResult> deleteItemAsync(final DeleteItemRequest request) {
+    AsyncTask<DeleteItemResult> deleteItemAsync(final DeleteItemRequest request) {
         setUserAgent(request);
-        final CompletableFuture<DeleteItemResult> result = new CompletableFuture();
+        final AsyncTask<DeleteItemResult> result = new AsyncTask();
         final int wcu = estimateCapacityUnits(DELETE_ITEM, request.getTableName());
         timedWriteThrottle(DELETE_ITEM, request.getTableName(), wcu);
 
@@ -664,18 +593,27 @@ public class DynamoDbDelegate  {
         }
     }
 
-    ListTablesResult listTables(final ListTablesRequest request) throws BackendException {
+    AsyncTask<ListTablesResult> listTablesAsync(final ListTablesRequest request) {
+
         controlPlaneRateLimiter.acquire();
-        final Timer.Context apiTimerContext = getTimerContext(listTablesApiName, null /*tableName*/);
-        ListTablesResult result;
-        try {
-            result = client.listTables(request);
-        } catch (final Exception e) {
-            throw processDynamoDbApiException(e, LIST_TABLES, null /*tableName*/);
-        } finally {
+
+
+        final AsyncTask<ListTablesResult> result = new AsyncTask();
+
+        final Timer.Context apiTimerContext = getTimerContext(LIST_TABLES, null);
+
+        client.listTablesAsync(request, new AsyncHandler<ListTablesRequest, ListTablesResult>() {
+            public void onError(final Exception e) {
+                result.completeExceptionally(processDynamoDbApiException(e, LIST_TABLES, null));
+            }
+            public void onSuccess(final ListTablesRequest req, final ListTablesResult res) {
+                result.complete(res);
+            }
+        });
+
+        return result.whenComplete((r, e) -> {
             apiTimerContext.stop();
-        }
-        return result;
+        });
     }
 
     public ListTablesResult listAllTables() throws BackendException {

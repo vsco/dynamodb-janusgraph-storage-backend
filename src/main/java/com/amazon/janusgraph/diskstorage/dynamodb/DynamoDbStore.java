@@ -91,7 +91,7 @@ public class DynamoDbStore extends AbstractDynamoDbStore {
         final List<Entry> entries = new ArrayList<>(items.size());
         for (Map<String, AttributeValue> item : items) {
             final Entry entry = new EntryBuilder(item).slice(sliceQuery.getSliceStart(), sliceQuery.getSliceEnd())
-                                                .build();
+            .build();
             if (null != entry) {
                 entries.add(entry);
             }
@@ -108,12 +108,12 @@ public class DynamoDbStore extends AbstractDynamoDbStore {
     public KeyIterator getKeys(final SliceQuery query, final StoreTransaction txh) throws BackendException {
         log.debug("Entering getKeys table:{} query:{} txh:{}", getTableName(), encodeForLog(query), txh);
         final Expression filterExpression = new FilterExpressionBuilder().rangeKey()
-                                                                         .range(query)
-                                                                         .build();
+        .range(query)
+        .build();
 
         final ScanRequest scanRequest = super.createScanRequest()
-                 .withFilterExpression(filterExpression.getConditionExpression())
-                 .withExpressionAttributeValues(filterExpression.getAttributeValues());
+                                        .withFilterExpression(filterExpression.getConditionExpression())
+                                        .withExpressionAttributeValues(filterExpression.getAttributeValues());
 
         final Scanner scanner;
         final ScanContextInterpreter interpreter;
@@ -131,8 +131,8 @@ public class DynamoDbStore extends AbstractDynamoDbStore {
     }
 
     private EntryList getKeysRangeQuery(final StaticBuffer hashKey, final SliceQuery query,
-            final StoreTransaction txh)
-            throws BackendException {
+                                        final StoreTransaction txh)
+    throws BackendException {
 
         log.debug("Range query for hashKey:{} txh:{}", encodeKeyForLog(hashKey), txh);
 
@@ -156,8 +156,8 @@ public class DynamoDbStore extends AbstractDynamoDbStore {
 
     private QueryRequest createQueryRequest(final StaticBuffer hashKey, final SliceQuery rangeQuery) {
         final Expression keyConditionExpression = new ConditionExpressionBuilder().hashKey(hashKey)
-                .rangeKey(rangeQuery.getSliceStart(), rangeQuery.getSliceEnd())
-                .build();
+        .rangeKey(rangeQuery.getSliceStart(), rangeQuery.getSliceEnd())
+        .build();
 
         return super.createQueryRequest()
                .withKeyConditionExpression(keyConditionExpression.getConditionExpression())
@@ -166,7 +166,7 @@ public class DynamoDbStore extends AbstractDynamoDbStore {
 
     @Override
     public EntryList getSlice(final KeySliceQuery query, final StoreTransaction txh)
-            throws BackendException {
+    throws BackendException {
         log.debug("Entering getSliceKeySliceQuery table:{} query:{} txh:{}", getTableName(), encodeForLog(query), txh);
         final EntryList result = getKeysRangeQuery(query.getKey(), query, txh);
         log.debug("Exiting getSliceKeySliceQuery table:{} query:{} txh:{} returning:{}", getTableName(), encodeForLog(query), txh,
@@ -243,11 +243,11 @@ public class DynamoDbStore extends AbstractDynamoDbStore {
             final KCVMutation mutation = entry.getValue();
             // Filter out deletions that are also added - TODO why use a set?
             final Set<StaticBuffer> add = mutation.getAdditions().stream()
-                .map(Entry::getColumn).collect(Collectors.toSet());
+                                          .map(Entry::getColumn).collect(Collectors.toSet());
 
             final List<StaticBuffer> mutableDeletions = mutation.getDeletions().stream()
-                .filter(del -> !add.contains(del))
-                .collect(Collectors.toList());
+                    .filter(del -> !add.contains(del))
+                    .collect(Collectors.toList());
 
             if (mutation.hasAdditions()) {
                 workers.addAll(createWorkersForAdditions(hashKey, mutation.getAdditions(), txh));
@@ -262,40 +262,40 @@ public class DynamoDbStore extends AbstractDynamoDbStore {
 
     private Collection<MutateWorker> createWorkersForAdditions(final StaticBuffer hashKey, final List<Entry> additions, final DynamoDbStoreTransaction txh) {
         return additions.stream().map(addition -> {
-                final StaticBuffer rangeKey = addition.getColumn();
-                final Map<String, AttributeValue> keys = new ItemBuilder().hashKey(hashKey)
-                    .rangeKey(rangeKey)
-                    .build();
+            final StaticBuffer rangeKey = addition.getColumn();
+            final Map<String, AttributeValue> keys = new ItemBuilder().hashKey(hashKey)
+            .rangeKey(rangeKey)
+            .build();
 
-                final Expression updateExpression = new MultiUpdateExpressionBuilder(this, txh).hashKey(hashKey)
-                    .rangeKey(rangeKey)
-                    .value(addition.getValue())
-                    .build();
+            final Expression updateExpression = new MultiUpdateExpressionBuilder(this, txh).hashKey(hashKey)
+            .rangeKey(rangeKey)
+            .value(addition.getValue())
+            .build();
 
-                return super.createUpdateItemRequest()
-                    .withUpdateExpression(updateExpression.getUpdateExpression())
-                    .withConditionExpression(updateExpression.getConditionExpression())
-                    .withExpressionAttributeValues(updateExpression.getAttributeValues())
-                    .withKey(keys);
-            })
-            .map(request -> new UpdateItemWorker(request, client.getDelegate()))
-            .collect(Collectors.toList());
+            return super.createUpdateItemRequest()
+            .withUpdateExpression(updateExpression.getUpdateExpression())
+            .withConditionExpression(updateExpression.getConditionExpression())
+            .withExpressionAttributeValues(updateExpression.getAttributeValues())
+            .withKey(keys);
+        })
+        .map(request -> new UpdateItemWorker(request, client.getDelegate()))
+        .collect(Collectors.toList());
     }
 
     private Collection<MutateWorker> createWorkersForDeletions(final StaticBuffer hashKey, final List<StaticBuffer> deletions, final DynamoDbStoreTransaction txh) {
         final List<MutateWorker> workers = new LinkedList<>();
         for (StaticBuffer rangeKey : deletions) {
             final Map<String, AttributeValue> keys = new ItemBuilder().hashKey(hashKey)
-                                                                      .rangeKey(rangeKey)
-                                                                      .build();
+            .rangeKey(rangeKey)
+            .build();
 
             final Expression updateExpression = new MultiUpdateExpressionBuilder(this, txh).hashKey(hashKey)
-                                                                                  .rangeKey(rangeKey)
-                                                                                  .build();
+            .rangeKey(rangeKey)
+            .build();
 
             final DeleteItemRequest request = super.createDeleteItemRequest().withKey(keys)
-                     .withConditionExpression(updateExpression.getConditionExpression())
-                     .withExpressionAttributeValues(updateExpression.getAttributeValues());
+                                              .withConditionExpression(updateExpression.getConditionExpression())
+                                              .withExpressionAttributeValues(updateExpression.getAttributeValues());
 
 
             workers.add(new DeleteItemWorker(request, client.getDelegate()));
@@ -306,20 +306,20 @@ public class DynamoDbStore extends AbstractDynamoDbStore {
     @Override
     public CreateTableRequest getTableSchema() {
         return super.getTableSchema()
-            .withAttributeDefinitions(
-                new AttributeDefinition()
-                    .withAttributeName(Constants.JANUSGRAPH_HASH_KEY)
-                    .withAttributeType(ScalarAttributeType.S),
-                new AttributeDefinition()
-                    .withAttributeName(Constants.JANUSGRAPH_RANGE_KEY)
-                    .withAttributeType(ScalarAttributeType.S))
-            .withKeySchema(
-                new KeySchemaElement()
-                    .withAttributeName(Constants.JANUSGRAPH_HASH_KEY)
-                    .withKeyType(KeyType.HASH),
-                new KeySchemaElement()
-                    .withAttributeName(Constants.JANUSGRAPH_RANGE_KEY)
-                    .withKeyType(KeyType.RANGE));
+               .withAttributeDefinitions(
+                   new AttributeDefinition()
+                   .withAttributeName(Constants.JANUSGRAPH_HASH_KEY)
+                   .withAttributeType(ScalarAttributeType.S),
+                   new AttributeDefinition()
+                   .withAttributeName(Constants.JANUSGRAPH_RANGE_KEY)
+                   .withAttributeType(ScalarAttributeType.S))
+               .withKeySchema(
+                   new KeySchemaElement()
+                   .withAttributeName(Constants.JANUSGRAPH_HASH_KEY)
+                   .withKeyType(KeyType.HASH),
+                   new KeySchemaElement()
+                   .withAttributeName(Constants.JANUSGRAPH_RANGE_KEY)
+                   .withKeyType(KeyType.RANGE));
     }
 
 }
